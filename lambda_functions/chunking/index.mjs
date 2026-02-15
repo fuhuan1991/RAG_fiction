@@ -10,9 +10,10 @@ const OVERLAP_TOKENS = 120;
 export const handler = async (event) => {
   console.log("----------------Start chunking: " + event.Records[0].s3.object.key);
   const bucket = event.Records[0].s3.bucket.name;
-  const bookTitle = event.Records[0].s3.object.key;
+  const s3FileName = event.Records[0].s3.object.key;
+  const bookTitle = s3FileName.split('.')[0]; // remove '.txt'
 
-  const command = new GetObjectCommand({ Bucket: bucket, Key: bookTitle });
+  const command = new GetObjectCommand({ Bucket: bucket, Key: s3FileName });
   const response = await s3.send(command);
 
   const rl = readline.createInterface({
