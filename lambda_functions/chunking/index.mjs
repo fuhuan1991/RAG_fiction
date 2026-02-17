@@ -4,8 +4,8 @@ import readline from "readline";
 
 const s3 = new S3Client({});
 const sqs = new SQSClient({ region: "us-east-1" });
-const MAX_TOKENS = 700;
-const OVERLAP_TOKENS = 120;
+const MAX_TOKENS = 500;
+const OVERLAP_TOKENS = 100;
 
 export const handler = async (event, context) => {
     try {
@@ -107,7 +107,7 @@ async function emitChunk(paragraphs, index, bookTitle) {
         MessageBody: JSON.stringify({
             chunkId: bookTitle + "_" + index,
             chunkIndex: index,
-            chunckText: text,
+            chunkText: text,
             bookTitle: bookTitle,
             timestamp: Date.now(),
             language: "en"
