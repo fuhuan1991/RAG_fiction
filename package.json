@@ -1,5 +1,21 @@
 {
   "dependencies": {
-    "@pinecone-database/pinecone": "^7.0.0"
+    "@pinecone-database/pinecone": "^7.0.0",
+    "dotenv": "^17.3.1",
+    "openai": "^6.25.0",
+    "langchain": "^0.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.7.0"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "tsx app.ts",
+    "single_test": "tsx test.ts", 
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
   }
 }
