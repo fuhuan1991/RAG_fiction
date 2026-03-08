@@ -24,18 +24,23 @@ interface Config {
   SPARSE_EMBED_MODEL: string;
   server: ServerConfig;
   api: ApiConfig;
+  TOP_K: number;
+  GPT_MODEL: string;
 }
 
 const config: Config = {
   // Environment
   env: process.env.NODE_ENV || 'development',
 
-  PINECONE_API_KEY: process.env.PINECONE_API_KEY || '',
+  GPT_MODEL: 'gpt-4.1-mini',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+
+  PINECONE_API_KEY: process.env.PINECONE_API_KEY || '',
   INDEX_NAME: 'test-hybrid-index-1',
   NAME_SPACE: '__default__',
   DENSE_EMBED_MODEL: 'llama-text-embed-v2',
   SPARSE_EMBED_MODEL: 'pinecone-sparse-english-v0',
+  TOP_K: 15, 
 
   // Server Configuration
   server: {
