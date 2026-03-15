@@ -26,6 +26,7 @@ interface Config {
   api: ApiConfig;
   TOP_K: number;
   GPT_MODEL: string;
+  BOOK_NAME: string;
 }
 
 const config: Config = {
@@ -40,7 +41,8 @@ const config: Config = {
   NAME_SPACE: '__default__',
   DENSE_EMBED_MODEL: 'llama-text-embed-v2',
   SPARSE_EMBED_MODEL: 'pinecone-sparse-english-v0',
-  TOP_K: 15, 
+  TOP_K: 10, 
+  BOOK_NAME: 'Bable',
 
   // Server Configuration
   server: {
