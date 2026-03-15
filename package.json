@@ -4,7 +4,8 @@
     "@pinecone-database/pinecone": "^7.0.0",
     "dotenv": "^17.3.1",
     "langchain": "^1.2.30",
-    "openai": "^6.25.0"
+    "openai": "^6.25.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -16,6 +17,7 @@
   "scripts": {
     "start": "tsx app.ts",
     "chain_test": "tsx test2.ts",
+    "babel": "tsx test4.ts",
     "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   }

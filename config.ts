@@ -42,7 +42,7 @@ const config: Config = {
   DENSE_EMBED_MODEL: 'llama-text-embed-v2',
   SPARSE_EMBED_MODEL: 'pinecone-sparse-english-v0',
   TOP_K: 10, 
-  BOOK_NAME: 'Bable',
+  BOOK_NAME: 'Babel',
 
   // Server Configuration
   server: {
