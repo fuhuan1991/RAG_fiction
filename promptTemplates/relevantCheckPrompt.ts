@@ -2,7 +2,7 @@ import { ChatPromptTemplate } from '@langchain/core/prompts';
 import * as z from 'zod';
 import config from '../config.ts';
 
-export const relevantCheckPrompt = ChatPromptTemplate.fromMessages([
+export const relevantCheckPromptTemplate = ChatPromptTemplate.fromMessages([
 	['system',
 		`You are a helpful assistant that analyzes whether a user's question is related to the novel "${config.BOOK_NAME}".
 
