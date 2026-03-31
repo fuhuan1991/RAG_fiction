@@ -3,13 +3,14 @@ import { tool } from 'langchain';
 import OpenAI from 'openai';
 import config from '../config.ts';
 
-export const GET_EXTERNAL_INFO: string = 'external_info';
+export const GET_EXTERNAL_INFO: string = 'get_external_info';
+
+const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
 /**
  * Perform a web search using OpenAI's Responses API with web_search_preview.
  */
 async function externalSearch(query: string): Promise<string> {
-    const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
     const response = await openai.responses.create({
         model: config.GPT_MODEL,
@@ -27,44 +28,46 @@ async function externalSearch(query: string): Promise<string> {
     return textParts.join('\n') || 'No results found.';
 }
 
-export const getExternalInfo = tool(
-    async ({ infoRequests }) => {
+/**
+ * Factory function that creates a new getExternalInfo tool instance.
+ * Each instance maintains its own list of acquired external information
+ * to track results across multiple calls within the same session.
+ *
+ * Usage: Call this once per user request/session so that acquired info
+ * state is not shared across different users.
+ */
+export function createExternalInfoTool() {
+    // Per-session list to store external info retrieved during this session
+    const acquiredExternalInfo: string[] = [];
 
-        const results: string[] = [];
+    const newTool = tool(
+        async ({ neededInformation }) => {
 
-        console.log('The following external information is needed:');
-        for (const item of infoRequests) {
-            console.log('-' + item.neededInformation);
+            console.log('----LLM wants to know this from internet: ' + neededInformation);
+
+            try {
+                const result = await externalSearch(neededInformation);
+                acquiredExternalInfo.push(result);
+                return result;
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                console.error('----externalSearch failed:', errorMessage);
+                return `Failed to search the web: ${errorMessage}. Please try again or rephrase the query.`;
+            }
+        },
+        {
+            name: GET_EXTERNAL_INFO,
+            description:
+                `Search the web for external/real-world information related to the novel "${config.BOOK_NAME}". ` +
+                `Use this for general/real-world knowledge such as historical context, cultural references, literary analysis, author background, etc.`,
+            schema: z.object({
+                neededInformation: z.string().describe(
+                    'A description of the specific external/real-world information needed. ' +
+                    'Be specific and descriptive.'
+                ),
+            }),
         }
+    );
 
-        await Promise.all(
-            infoRequests.map(async (request) => {
-                const { neededInformation } = request;
-                const externalResult = await externalSearch(neededInformation);
-                results.push(externalResult);
-            })
-        );
-
-        return results;
-    },
-    {
-        name: GET_EXTERNAL_INFO,
-        description:
-            `Search the web for external/real-world information related to the novel "${config.BOOK_NAME}". ` +
-            `This tool accepts multiple information requests at once, each specifying what information is needed. ` +
-            `Use this for general/real-world knowledge such as historical context, cultural references, literary analysis, author background, etc. ` +
-            `Returns an array of strings, one result per request.`,
-        schema: z.object({
-            infoRequests: z.array(
-                z.object({
-                    neededInformation: z.string().describe(
-                        'A description of the specific external/real-world information needed. ' +
-                        'Be specific and descriptive.'
-                    ),
-                })
-            ).describe(
-                'An array of information requests. Each request specifies what external information is needed.'
-            )
-        }),
-    }
-);
+    return [newTool, acquiredExternalInfo] as const;
+}
