@@ -27,7 +27,7 @@ export type AnswerSingleQuestionOutput =
     | IrrelevantQuestionResult
     | RelevantQuestionResult;
 
-import { createAgent } from "langchain";
+import { createAgent, toolCallLimitMiddleware } from "langchain";
 import { relevantCheckPromptTemplate, relevantCheckOutput } from "./promptTemplates/relevantCheckPrompt";
 import { searchPromptTemplate, searchOutput } from "./promptTemplates/searchPrompt";
 import { answerGenerationPromptTemplate } from "./promptTemplates/answerGenerationPrompt.ts";
@@ -40,18 +40,27 @@ export async function answerSingleQuestion({ userQuery }: AnswerSingleQuestionIn
     const [getExternalInfo, acquiredExternalInfo] = createExternalInfoTool();
 
     const relevantCheckAgent = createAgent({
+        name: "RelevantCheckAgent",
         model: config.GPT_MODEL,
-        tools: [],
-        responseFormat: relevantCheckOutput
+        tools: [ getExternalInfo ],
+        responseFormat: relevantCheckOutput,
+        middleware: [
+            toolCallLimitMiddleware({ runLimit: config.RELEVANT_CHECK_MAX_TOOL_CALLS }),
+        ],
     });
 
     const searchAgent = createAgent({
+        name: "SearchAgent",
         model: config.GPT_MODEL,
         tools: [ getInternalInfo, getExternalInfo ],
-        responseFormat: searchOutput
+        responseFormat: searchOutput,
+        middleware: [
+            toolCallLimitMiddleware({ runLimit: config.SEARCH_MAX_TOOL_CALLS }),
+        ],
     });
 
     const answerAgent = createAgent({
+        name: "AnswerGenerationAgent",
         model: config.GPT_MODEL,
     });
 
@@ -70,11 +79,11 @@ export async function answerSingleQuestion({ userQuery }: AnswerSingleQuestionIn
     const searchResult = await searchAgent.invoke({ messages: searchPrompt });
 
     const internalContextString = acquiredChunks
-        .map((chunk, i) => `<chunk id="${i + 1}">\n${chunk}\n</chunk>`)
+        .map((chunk) => `<passage>\n${chunk}\n</passage>`)
         .join("\n");
 
     const externalContextString = acquiredExternalInfo
-        .map((chunk, i) => `<external-info id="${i + 1}">\n${chunk}\n</external-info>`)
+        .map((chunk) => `<external-info>\n${chunk}\n</external-info>`)
         .join("\n");
 
     const answerGenerationPrompt = await answerGenerationPromptTemplate.formatMessages({ userQuery, internalContext: internalContextString, externalContext: externalContextString});

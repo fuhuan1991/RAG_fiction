@@ -1,0 +1,59 @@
+# RAG Fiction — Project Context
+
+## Overview
+A Retrieval-Augmented Generation (RAG) system that answers user questions about a specific novel (currently configured for "Babel"). It combines internal knowledge (retrieved from the novel's text via vector search) with external knowledge (web search) to produce grounded, evidence-based answers.
+
+## Tech Stack
+- **Language**: TypeScript (ES modules, `tsx` runner)
+- **LLM Framework**: LangChain.js (`langchain`, `@langchain/openai`)
+- **LLM**: OpenAI GPT-4.1-mini (configurable in `config.ts`)
+- **Vector Database**: Pinecone (hybrid index with dense + sparse vectors)
+- **Embedding Models**: `llama-text-embed-v2` (dense), `pinecone-sparse-english-v0` (sparse)
+- **External Search**: OpenAI Responses API with `web_search_preview` tool
+- **Infrastructure**: AWS Lambda + SQS for the data ingestion pipeline
+
+## Architecture
+
+### Query Pipeline (local TypeScript)
+`answerSingleQuestion.ts` orchestrates a 3-agent pipeline:
+1. **RelevantCheckAgent** — Determines if the user's question is relevant to the novel and practical to answer. Uses `get_external_info` tool for context. Returns `{ isRelevant, reason }`.
+2. **SearchAgent** — Gathers information by calling `get_internal_info` (Pinecone vector search) and/or `get_external_info` (web search). Performs multiple rounds of tool calls until sufficient context is collected.
+3. **AnswerGenerationAgent** — Generates the final answer using the accumulated internal and external context. Output is markdown with "Summary" and "Supporting Evidence" sections.
+
+### Tools
+- **`get_internal_info`** (`tools/internalInfoTool.ts`) — Hybrid search (dense + sparse) against Pinecone. Per-session deduplication of chunks. Factory pattern returns `[tool, acquiredChunks]`.
+- **`get_external_info`** (`tools/externalInfoTool.ts`) — Web search via OpenAI Responses API. Factory pattern returns `[tool, acquiredExternalInfo]`.
+
+### Vector Search (`pineconeHandler.ts`)
+- Hybrid search with configurable alpha weight (default 0.7 = 70% semantic, 30% keyword)
+- Score threshold filtering (0.3)
+- Retry logic with exponential backoff
+
+### Data Ingestion Pipeline (AWS Lambda)
+Located in `lambda_functions/`:
+1. **Chunking** (`chunking/index.mjs`) — Triggered by S3 upload. Reads a `.txt` file, splits into ~500-token chunks with 100-token overlap, sends each chunk to SQS.
+2. **Dense Vectorization** (`dense_vectorization/index.mjs`) — Consumes SQS messages, upserts chunks to Pinecone using integrated embedding (server-side).
+3. **Hybrid Vectorization** (`hybrid_vectorization/index.mjs`) — Consumes SQS messages, generates both dense and sparse embeddings client-side, upserts to a hybrid Pinecone index.
+
+## Key Files
+| File | Purpose |
+|---|---|
+| `config.ts` | Central configuration (API keys, model names, search params) |
+| `answerSingleQuestion.ts` | Main query pipeline orchestrator |
+| `pineconeHandler.ts` | Pinecone vectorization & search |
+| `promptTemplates/*.ts` | LangChain prompt templates + Zod output schemas |
+| `tools/*.ts` | LangChain tool definitions (internal & external search) |
+| `cli_test.ts` | Interactive CLI for testing (`npm run cli_test`) |
+| `app.ts` | App entry point (currently placeholder) |
+
+## Commands
+- `npm start` — Run `app.ts`
+- `npm run cli_test` — Interactive CLI to ask questions about the novel
+- `npm run typecheck` — TypeScript type checking
+
+## Conventions
+- ESM modules throughout (`"type": "module"` in package.json)
+- `.ts` extensions in imports
+- Factory pattern for tools (per-session state isolation)
+- Zod schemas for structured LLM outputs
+- Environment variables via `.env` file (dotenv)

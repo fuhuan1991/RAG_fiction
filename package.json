@@ -16,8 +16,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx app.ts",
-    "chain_test": "tsx test2.ts",
-    "babel": "tsx test4.ts",
+    "cli_test": "tsx cli_test.ts",
     "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   }
