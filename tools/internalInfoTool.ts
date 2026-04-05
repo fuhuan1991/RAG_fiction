@@ -1,9 +1,12 @@
 import * as z from 'zod';
 import { tool } from 'langchain';
+import { ChatOpenAI } from '@langchain/openai';
 import config from '../config.ts';
 import { vectorize, searchChunks, HybridVectors, ChunkResult } from '../pineconeHandler.ts';
+import { queryExpansionPromptTemplate, queryExpansionOutput } from '../promptTemplates/queryExpansionPrompt.ts';
 
 export const GET_INTERNAL_INFO: string = 'get_internal_info';
+const EXPAND_QUERY_TEMPERATURE = 0.7; // moderate creativity for diverse phrasings
 
 /**
  * Search the novel's content in Pinecone.
@@ -12,6 +15,48 @@ async function internalSearch(query: string): Promise<ChunkResult[]> {
     const hybridVectors: HybridVectors = await vectorize(query);
     const chunks: ChunkResult[] = await searchChunks(hybridVectors);
     return chunks;
+}
+
+/**
+ * Use an LLM to generate alternative phrasings of the original query
+ * to improve vector search recall (multi-query expansion).
+ * Returns the original query + N-1 alternatives.
+ */
+async function expandQuery(originalQuery: string): Promise<string[]> {
+    const alternativeCount = config.MULTI_QUERY_COUNT - 1;
+
+    // If only 1 query is configured, skip expansion entirely
+    if (alternativeCount <= 0) {
+        return [originalQuery];
+    }
+
+    try {
+        const llm = new ChatOpenAI({
+            model: config.QUERY_EXPANSION_MODEL,
+            temperature: EXPAND_QUERY_TEMPERATURE,
+            apiKey: config.OPENAI_API_KEY,
+        });
+
+        const structuredLlm = llm.withStructuredOutput(queryExpansionOutput);
+
+        const queryExpansionPrompt = await queryExpansionPromptTemplate.formatMessages({
+            originalQuery,
+            alternativeCount: String(alternativeCount),
+        });
+
+        const result = await structuredLlm.invoke(queryExpansionPrompt);
+
+        // Combine original + alternatives, ensuring we don't exceed the configured count
+        const alternatives = result.alternatives.slice(0, alternativeCount);
+        console.log('----Query expansion alternatives:', JSON.stringify(alternatives));
+
+        return [originalQuery, ...alternatives];
+    } catch (error) {
+        // If expansion fails, fall back to just the original query
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.warn('----Query expansion failed, using original query only:', errorMessage);
+        return [originalQuery];
+    }
 }
 
 /**
@@ -33,25 +78,44 @@ export function createInternalInfoTool() {
             console.log('----LLM wants to know this from the book: ' + neededInformation);
 
             try {
-                const chunks: ChunkResult[] = await internalSearch(neededInformation);
+                // Step 1: Expand the query into multiple alternative phrasings
+                const expandedQueries = await expandQuery(neededInformation);
+                console.log(`----Running ${expandedQueries.length} parallel searches`);
 
-                // Remove chunks that have already been returned in previous calls within this session
-                const newChunks = chunks.filter(chunk => !seenChunkIds.has(chunk.id));
+                // Step 2: Run vector searches in parallel for all expanded queries
+                const searchResults = await Promise.all(
+                    expandedQueries.map(query => internalSearch(query))
+                );
 
-                // Track the new chunk IDs for future deduplication
-                newChunks.forEach((chunk: ChunkResult) => {
+                // Step 3: Merge and deduplicate results across all expanded queries
+                // Use a local set so chunks appearing in multiple expanded queries
+                // are only included once in this call's output
+                const localSeenIds = new Set<string>();
+                const mergedChunks: ChunkResult[] = [];
+
+                for (const chunks of searchResults) {
+                    for (const chunk of chunks) {
+                        if (!localSeenIds.has(chunk.id) && !seenChunkIds.has(chunk.id)) {
+                            localSeenIds.add(chunk.id);
+                            mergedChunks.push(chunk);
+                        }
+                    }
+                }
+
+                // Track the new chunk IDs for future cross-call deduplication
+                mergedChunks.forEach((chunk: ChunkResult) => {
                     acquiredChunks.push(chunk.text);
-                    seenChunkIds.add(chunk.id)
+                    seenChunkIds.add(chunk.id);
                 });
 
                 console.log("----seenChunkIds length:" + seenChunkIds.size);
                 console.log("----seenChunkIds:" + JSON.stringify([...seenChunkIds]));
 
-                if (newChunks.length === 0) {
+                if (mergedChunks.length === 0) {
                     return 'No relevant passages found in the novel for this query.';
                 }
 
-                const outputForLLM = newChunks.map((chunk: ChunkResult) => {
+                const outputForLLM = mergedChunks.map((chunk: ChunkResult) => {
                     return chunk.text;
                 });
 

@@ -25,8 +25,13 @@ interface Config {
   server: ServerConfig;
   api: ApiConfig;
   TOP_K: number;
+  HYBRID_SEARCH_ALPHA: number;
   GPT_MODEL: string;
   BOOK_NAME: string;
+  RELEVANT_CHECK_MAX_TOOL_CALLS: number;
+  SEARCH_MAX_TOOL_CALLS: number;
+  MULTI_QUERY_COUNT: number;
+  QUERY_EXPANSION_MODEL: string;
 }
 
 const config: Config = {
@@ -41,8 +46,20 @@ const config: Config = {
   NAME_SPACE: '__default__',
   DENSE_EMBED_MODEL: 'llama-text-embed-v2',
   SPARSE_EMBED_MODEL: 'pinecone-sparse-english-v0',
-  TOP_K: 10, 
+  TOP_K: 10,
+  // Weight between dense (semantic) and sparse (keyword) search.
+  // 1.0 = pure semantic, 0.0 = pure keyword, 0.5 = equal weight
+  HYBRID_SEARCH_ALPHA: 0.7,
   BOOK_NAME: 'Babel',
+
+  // Max tool calls (per run) for each agent
+  RELEVANT_CHECK_MAX_TOOL_CALLS: 3,
+  SEARCH_MAX_TOOL_CALLS: 10,
+
+  // Multi-query expansion: total number of queries (original + alternatives)
+  MULTI_QUERY_COUNT: 3,
+  // A fast, cheap model for generating alternative query phrasings
+  QUERY_EXPANSION_MODEL: 'gpt-4.1-nano',
 
   // Server Configuration
   server: {
