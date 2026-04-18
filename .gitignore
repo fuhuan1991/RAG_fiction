@@ -17,3 +17,5 @@ yarn-error.log*
 # Optional: OS files
 .DS_Store
 Thumbs.db
+# LangGraph API
+.langgraph_api

@@ -1,33 +1,95 @@
 # RAG Fiction — Project Context
 
 ## Overview
-A Retrieval-Augmented Generation (RAG) system that answers user questions about a specific novel (currently configured for "Babel"). It combines internal knowledge (retrieved from the novel's text via vector search) with external knowledge (web search) to produce grounded, evidence-based answers.
+A Retrieval-Augmented Generation (RAG) system that answers user questions about a specific novel (currently configured for "Babel"). It combines internal knowledge (retrieved from the novel's text via hybrid vector search) with external knowledge (web search) to produce grounded, evidence-based answers. The project uses a LangGraph-based stateful graph pipeline for query processing, featuring question decomposition, interleaved sub-question answering with looping, and final answer synthesis.
 
 ## Tech Stack
 - **Language**: TypeScript (ES modules, `tsx` runner)
-- **LLM Framework**: LangChain.js (`langchain`, `@langchain/openai`)
-- **LLM**: OpenAI GPT-4.1-mini (configurable in `config.ts`)
+- **LLM Framework**: LangChain.js (`langchain`, `@langchain/openai`, `@langchain/langgraph`)
+- **LLM**: OpenAI GPT-4.1-mini (configurable in `config.ts`); GPT-4.1-nano for lightweight tasks (query expansion)
 - **Vector Database**: Pinecone (hybrid index with dense + sparse vectors)
 - **Embedding Models**: `llama-text-embed-v2` (dense), `pinecone-sparse-english-v0` (sparse)
 - **External Search**: OpenAI Responses API with `web_search_preview` tool
+- **Graph Orchestration**: LangGraph (`@langchain/langgraph`) with `langgraph.json` config
+- **Observability**: LangSmith tracing via `RunnableLambda` wrappers with `runName` / `tags`
 - **Infrastructure**: AWS Lambda + SQS for the data ingestion pipeline
 
 ## Architecture
 
-### Query Pipeline (local TypeScript)
-`answerSingleQuestion.ts` orchestrates a 3-agent pipeline:
-1. **RelevantCheckAgent** — Determines if the user's question is relevant to the novel and practical to answer. Uses `get_external_info` tool for context. Returns `{ isRelevant, reason }`.
-2. **SearchAgent** — Gathers information by calling `get_internal_info` (Pinecone vector search) and/or `get_external_info` (web search). Performs multiple rounds of tool calls until sufficient context is collected.
-3. **AnswerGenerationAgent** — Generates the final answer using the accumulated internal and external context. Output is markdown with "Summary" and "Supporting Evidence" sections.
+### Query Pipeline — LangGraph Graph-Based (`questionFlow.ts`)
+A `StateGraph` pipeline for handling both simple and complex questions. Uses Zod-based state (`QuestionStateDefinition`) and the following nodes:
+
+1. **`relevant_check_node`** — Uses `createAgent` from LangChain with the `externalSearchToolForAgent` tool to determine if the user's question is relevant to the novel and practical to answer. Returns `{ isRelevant, reason }`. Routes to `decomposition_node` if relevant, or directly to `END` (with the rejection reason stored in `finalAnswer`) if not.
+
+2. **`decomposition_node`** — Uses an LLM with structured output to decide whether to decompose the question into ≤3 sub-queries. Updates `questionStack` and `questionIndex` in state. Non-decomposed questions proceed with `questionIndex = -1`.
+
+3. **`planning_node`** — Placeholder (currently returns empty). Reserved for future planning logic. Acts as a pass-through between decomposition/answering loop and gather.
+
+4. **`gather_information_node`** — For the current sub-question (or the original if not decomposed), runs source classification (internal vs. external) and retrieves information accordingly. Uses `internalSearchTool()` and `externalSearchTool()` directly. Maintains `seenChunkIds` for deduplication across all sub-questions. When decomposed and `questionIndex == -1` (all sub-questions answered), skips retrieval since the final answer can be synthesized from existing sub-Q&A context.
+
+5. **`answering_node`** — Fully implemented with two paths:
+   - **Sub-question path** (`questionIndex ≥ 0`): Answers the current sub-question using retrieved context + all previous Q&A pairs (ordered foundational → dependent). Stores the answer in `questionStack` and decrements `questionIndex`.
+   - **Final answer path** (`questionIndex == -1`): For decomposed questions, synthesizes a final answer from all sub-Q&A pairs + retrieved context using `answerFinalQuestionPrompt`. For simple (non-decomposed) questions, generates the answer directly using the same prompt.
+
+#### Graph Flow
+```
+Decomposed (complex question):
+START → relevant_check → [relevant?] → decomposition → planning → gather → answering → [router]
+                              |                           ↑                               |
+                              |                           |___ (more sub-Qs to answer) ___|
+                              |                                                           |
+                              → END (irrelevant)                          (all done) → END
+
+Non-decomposed (simple question):
+START → relevant_check → decomposition → planning → gather → answering → END
+```
+
+The `routerAfterAnswer` conditional edge checks if `finalAnswer` is still empty — if so, loops back to `planning_node` for the next sub-question; otherwise routes to `END`.
+
+Graph is exported as `graph` and registered in `langgraph.json` as `"agent": "./questionFlow.ts:graph"`.
+
+#### Sub-Question Processing Order
+`decomposition_node` stores sub-questions in reverse order with `unshift`:
+- `questionStack` = [dependent, ..., foundational]
+- `questionIndex` starts at highest index (foundational)
+- Processes from high → low index: foundational → ... → dependent
+- Previous Q&A context = items with index > current `questionIndex`
 
 ### Tools
-- **`get_internal_info`** (`tools/internalInfoTool.ts`) — Hybrid search (dense + sparse) against Pinecone. Per-session deduplication of chunks. Factory pattern returns `[tool, acquiredChunks]`.
-- **`get_external_info`** (`tools/externalInfoTool.ts`) — Web search via OpenAI Responses API. Factory pattern returns `[tool, acquiredExternalInfo]`.
+Each tool file exports **two patterns**:
+- **Direct function** (`internalSearchTool()` / `externalSearchTool()`) — Standalone async functions that accept parameters directly. Used by graph nodes (`gather_information_node`).
+- **LangChain tool wrapper** (`externalSearchToolForAgent`) — Wrapped with `tool()` from LangChain for use with `createAgent`-based nodes (`relevant_check_node`). Currently only the external search tool has this wrapper.
+
+#### `get_internal_info` (`tools/internalInfoTool.ts`)
+- Hybrid search (dense + sparse) against Pinecone
+- **Multi-query expansion**: uses `queryExpansionPrompt.ts` with `QUERY_EXPANSION_MODEL` (gpt-4.1-nano) to generate alternative phrasings, then runs parallel vector searches and deduplicates results
+- Caller-managed deduplication via `seenChunkIds` parameter
+- Configurable via `MULTI_QUERY_COUNT` (default 3 = original + 2 alternatives)
+- Exports: `internalSearchTool()`, `GET_INTERNAL_INFO`
+
+#### `get_external_info` (`tools/externalInfoTool.ts`)
+- Web search via OpenAI Responses API
+- Wrapped in `RunnableLambda` for LangSmith tracing (`external_search_llm_call`)
+- Exports: `externalSearchTool()` (direct), `externalSearchToolForAgent` (LangChain tool wrapper), `GET_EXTERNAL_INFO`
 
 ### Vector Search (`pineconeHandler.ts`)
 - Hybrid search with configurable alpha weight (default 0.7 = 70% semantic, 30% keyword)
 - Score threshold filtering (0.3)
-- Retry logic with exponential backoff
+- Retry logic with exponential backoff (configurable retries & base delay)
+- `RunnableLambda` wrapper (`retrieve_chunks`) for LangSmith tracing
+- Exports: `vectorize()`, `searchChunks()`, `HybridVectors` type, `ChunkResult` type
+
+### Prompt Templates (`promptTemplates/`)
+| File | Purpose | Output Schema |
+|---|---|---|
+| `relevantCheckPrompt.ts` | Assess if user question is relevant & answerable | `{ isRelevant, reason }` |
+| `questionDecompositionPrompt.ts` | Decompose complex questions into ≤3 sub-queries | `{ decomposed, subQueries }` |
+| `sourceClassifierPrompt.ts` | Classify question as needing internal/external/both sources | `{ needInternalSearch, needExternalSearch }` |
+| `queryExpansionPrompt.ts` | Generate alternative query phrasings for multi-query search | `{ alternatives }` |
+| `answerSubQuestionPrompt.ts` | Answer individual sub-questions with previous Q&A context | `{ subQuestionAnswer }` |
+| `answerFinalQuestionPrompt.ts` | Generate final answer synthesizing sub-Q&A + retrieved context | `{ finalQuestionAnswer }` |
+| `answerGenerationPrompt.ts` | ⚠️ Legacy — was used by the removed agent-based pipeline | Free-form markdown |
+| `searchPrompt.ts` | ⚠️ Legacy — was used by the removed agent-based pipeline's SearchAgent | `{ isFinished }` |
 
 ### Data Ingestion Pipeline (AWS Lambda)
 Located in `lambda_functions/`:
@@ -38,22 +100,38 @@ Located in `lambda_functions/`:
 ## Key Files
 | File | Purpose |
 |---|---|
-| `config.ts` | Central configuration (API keys, model names, search params) |
-| `answerSingleQuestion.ts` | Main query pipeline orchestrator |
-| `pineconeHandler.ts` | Pinecone vectorization & search |
+| `config.ts` | Central configuration (API keys, model names, search params, multi-query settings) |
+| `questionFlow.ts` | LangGraph stateful graph pipeline — the main query pipeline |
+| `langgraph.json` | LangGraph deployment config (registers `questionFlow.ts:graph`) |
+| `pineconeHandler.ts` | Pinecone hybrid vectorization & search with retry logic |
 | `promptTemplates/*.ts` | LangChain prompt templates + Zod output schemas |
-| `tools/*.ts` | LangChain tool definitions (internal & external search) |
-| `cli_test.ts` | Interactive CLI for testing (`npm run cli_test`) |
-| `app.ts` | App entry point (currently placeholder) |
+| `tools/*.ts` | Tool definitions — direct functions + LangChain tool wrappers |
+| `cli_test.ts` | ⚠️ Broken — still imports the removed `answerSingleQuestion.ts` |
+| `app.ts` | App entry point (currently placeholder — `console.log("hello!")`) |
+| `.plan.md` | Implementation plan for interleaved sub-question answering (partially outdated) |
+
+## Configuration (`config.ts`)
+| Key | Default | Description |
+|---|---|---|
+| `GPT_MODEL` | `gpt-4.1-mini` | Primary LLM for all nodes |
+| `QUERY_EXPANSION_MODEL` | `gpt-4.1-nano` | Lightweight LLM for multi-query expansion |
+| `TOP_K` | `10` | Number of results per Pinecone query |
+| `HYBRID_SEARCH_ALPHA` | `0.7` | Dense/sparse weight (1.0=semantic, 0.0=keyword) |
+| `RELEVANT_CHECK_MAX_TOOL_CALLS` | `3` | Max tool calls for relevant check agent |
+| `SEARCH_MAX_TOOL_CALLS` | `10` | Max tool calls (currently unused — was for removed agent pipeline) |
+| `MULTI_QUERY_COUNT` | `3` | Total queries for expansion (original + alternatives) |
+| `BOOK_NAME` | `Babel` | Target novel name |
 
 ## Commands
 - `npm start` — Run `app.ts`
-- `npm run cli_test` — Interactive CLI to ask questions about the novel
+- `npm run cli_test` — ⚠️ Currently broken (imports removed `answerSingleQuestion.ts`)
 - `npm run typecheck` — TypeScript type checking
 
 ## Conventions
 - ESM modules throughout (`"type": "module"` in package.json)
 - `.ts` extensions in imports
-- Factory pattern for tools (per-session state isolation)
+- Direct functions for graph node logic; LangChain `tool()` wrappers for agent-based nodes within the graph
 - Zod schemas for structured LLM outputs
+- `RunnableLambda` wrappers with `runName` and `tags` for LangSmith observability
 - Environment variables via `.env` file (dotenv)
+- `withRetry()` utility for external API calls with exponential backoff

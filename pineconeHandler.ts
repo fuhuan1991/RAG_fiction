@@ -1,4 +1,5 @@
 import { Pinecone, QueryResponse } from '@pinecone-database/pinecone';
+import { RunnableLambda } from '@langchain/core/runnables';
 import config from './config.ts';
 
 export type HybridVectors = {
@@ -93,7 +94,7 @@ export async function vectorize(query: string, alpha: number = config.HYBRID_SEA
     };
 }
 
-export async function searchChunks(hybridVectors: HybridVectors): Promise<ChunkResult[]> {
+const searchChunksRunnable = RunnableLambda.from(async (hybridVectors: HybridVectors): Promise<ChunkResult[]> => {
     const searchResponse: QueryResponse = await withRetry(() => index.query({
         topK: config.TOP_K,
         vector: hybridVectors.weightedDenseValues,
@@ -113,6 +114,13 @@ export async function searchChunks(hybridVectors: HybridVectors): Promise<ChunkR
             id: match.id,
             text: match.metadata?.chunk_text as string,
         }));
+}).withConfig({
+    runName: 'retrieve_chunks',
+    tags: ['pinecone', 'retrieval'],
+});
+
+export async function searchChunks(hybridVectors: HybridVectors): Promise<ChunkResult[]> {
+    return searchChunksRunnable.invoke(hybridVectors);
 }
 
 
