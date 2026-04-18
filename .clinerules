@@ -12,6 +12,7 @@ A Retrieval-Augmented Generation (RAG) system that answers user questions about 
 - **External Search**: OpenAI Responses API with `web_search_preview` tool
 - **Graph Orchestration**: LangGraph (`@langchain/langgraph`) with `langgraph.json` config
 - **Observability**: LangSmith tracing via `RunnableLambda` wrappers with `runName` / `tags`
+- **Testing**: Vitest (unit tests with `vi.mock` for external dependencies)
 - **Infrastructure**: AWS Lambda + SQS for the data ingestion pipeline
 
 ## Architecture
@@ -106,6 +107,8 @@ Located in `lambda_functions/`:
 | `pineconeHandler.ts` | Pinecone hybrid vectorization & search with retry logic |
 | `promptTemplates/*.ts` | LangChain prompt templates + Zod output schemas |
 | `tools/*.ts` | Tool definitions — direct functions + LangChain tool wrappers |
+| `tests/*.test.ts` | Unit tests (Vitest) — currently covers `pineconeHandler.ts` |
+| `vitest.config.ts` | Vitest configuration |
 | `cli_test.ts` | ⚠️ Broken — still imports the removed `answerSingleQuestion.ts` |
 | `app.ts` | App entry point (currently placeholder — `console.log("hello!")`) |
 | `.plan.md` | Implementation plan for interleaved sub-question answering (partially outdated) |
@@ -124,6 +127,7 @@ Located in `lambda_functions/`:
 
 ## Commands
 - `npm start` — Run `app.ts`
+- `npm test` — Run unit tests (Vitest)
 - `npm run cli_test` — ⚠️ Currently broken (imports removed `answerSingleQuestion.ts`)
 - `npm run typecheck` — TypeScript type checking
 
