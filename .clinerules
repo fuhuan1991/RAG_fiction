@@ -24,7 +24,7 @@ A `StateGraph` pipeline for handling both simple and complex questions. Uses Zod
 
 2. **`decomposition_node`** — Uses an LLM with structured output to decide whether to decompose the question into ≤3 sub-queries. Updates `questionStack` and `questionIndex` in state. Non-decomposed questions proceed with `questionIndex = -1`.
 
-3. **`planning_node`** — Placeholder (currently returns empty). Reserved for future planning logic. Acts as a pass-through between decomposition/answering loop and gather.
+3. **`planning_node`** — Evaluates whether to dynamically add a new sub-question based on what has been learned so far. Uses `planningPrompt.ts` with structured output. Only activates when all of the following are true: the question was decomposed, at least one sub-question has been answered, we're still in the sub-question phase (`questionIndex >= 0`), and the total sub-question count hasn't exceeded `MAX_SUB_QUESTIONS`. When a new sub-question is added, it is inserted at `questionIndex + 1` and `questionIndex` is incremented so the new question is processed next (before remaining original sub-questions). Acts as a pass-through (no-op) for simple questions and on the first iteration before any sub-questions are answered.
 
 4. **`gather_information_node`** — For the current sub-question (or the original if not decomposed), runs source classification (internal vs. external) and retrieves information accordingly. Uses `internalSearchTool()` and `externalSearchTool()` directly. Maintains `seenChunkIds` for deduplication across all sub-questions. When decomposed and `questionIndex == -1` (all sub-questions answered), skips retrieval since the final answer can be synthesized from existing sub-Q&A context.
 
@@ -85,6 +85,7 @@ Each tool file exports **two patterns**:
 |---|---|---|
 | `relevantCheckPrompt.ts` | Assess if user question is relevant & answerable | `{ isRelevant, reason }` |
 | `questionDecompositionPrompt.ts` | Decompose complex questions into ≤3 sub-queries | `{ decomposed, subQueries }` |
+| `planningPrompt.ts` | Evaluate whether to add a new sub-question based on learned context | `{ shouldAddQuestion, newSubQuestion }` |
 | `sourceClassifierPrompt.ts` | Classify question as needing internal/external/both sources | `{ needInternalSearch, needExternalSearch }` |
 | `queryExpansionPrompt.ts` | Generate alternative query phrasings for multi-query search | `{ alternatives }` |
 | `answerSubQuestionPrompt.ts` | Answer individual sub-questions with previous Q&A context | `{ subQuestionAnswer }` |
@@ -124,6 +125,7 @@ Located in `lambda_functions/`:
 | `SEARCH_MAX_TOOL_CALLS` | `10` | Max tool calls (currently unused — was for removed agent pipeline) |
 | `MULTI_QUERY_COUNT` | `3` | Total queries for expansion (original + alternatives) |
 | `BOOK_NAME` | `Babel` | Target novel name |
+| `MAX_SUB_QUESTIONS` | `5` | Max total sub-questions allowed (original decomposed + dynamically added) |
 
 ## Commands
 - `npm start` — Run `app.ts`

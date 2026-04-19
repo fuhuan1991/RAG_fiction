@@ -1,6 +1,6 @@
 import * as readline from "readline";
-import { answerSingleQuestion } from "./answerSingleQuestion.ts";
-import config from './config.ts';
+import { graph } from "./questionFlow.ts";
+import config from "./config.ts";
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -11,13 +11,13 @@ rl.question(`Please ask a question about the book ${config.BOOK_NAME}: `, async 
   rl.close();
 
   try {
-    const result = await answerSingleQuestion({ userQuery });
+    const result = await graph.invoke({ originalQuestion: userQuery });
 
-    if (result.isRelevant) {
-      console.log(result.answer);
+    if (result.finalAnswer) {
+      console.log("\n--- Answer ---");
+      console.log(result.finalAnswer);
     } else {
-      console.log("Question deemed irrelevant:");
-      console.log(result.reason);
+      console.log("No answer was generated.");
     }
   } catch (error) {
     console.error("Error:", error);

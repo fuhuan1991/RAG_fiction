@@ -32,6 +32,7 @@ interface Config {
   SEARCH_MAX_TOOL_CALLS: number;
   MULTI_QUERY_COUNT: number;
   QUERY_EXPANSION_MODEL: string;
+  MAX_SUB_QUESTIONS: number;
 }
 
 const config: Config = {
@@ -60,6 +61,9 @@ const config: Config = {
   MULTI_QUERY_COUNT: 3,
   // A fast, cheap model for generating alternative query phrasings
   QUERY_EXPANSION_MODEL: 'gpt-4.1-nano',
+
+  // Max total sub-questions allowed (original decomposed + dynamically added)
+  MAX_SUB_QUESTIONS: 5,
 
   // Server Configuration
   server: {

@@ -14,6 +14,7 @@ import { decompositionPromptTemplate, decompositionOutput } from './promptTempla
 import { sourceClassifierPromptTemplate, sourceClassifierOutput } from './promptTemplates/sourceClassifierPrompt.ts';
 import { answerSubQuestionPromptTemplate, answerSubQuestionOutput } from './promptTemplates/answerSubQuestionPrompt.ts';
 import { answerFinalQuestionPromptTemplate, answerFinalQuestionOutput } from './promptTemplates/answerFinalQuestionPrompt.ts';
+import { planningPromptTemplate, planningOutput } from './promptTemplates/planningPrompt.ts';
 import { internalSearchTool } from './tools/internalInfoTool.ts';
 import { externalSearchTool, externalSearchToolForAgent } from './tools/externalInfoTool.ts';
 import { ChunkResult } from './pineconeHandler.ts';
@@ -115,6 +116,55 @@ async function decomposition(state: QuestionAgentState) {
 }
 
 async function planning(state: QuestionAgentState) {
+    const { decomposed, questionIndex, questionStack, originalQuestion } = state;
+
+    // Skip planning if:
+    // - Question was not decomposed (simple question)
+    // - We're in the final answer phase (questionIndex === -1)
+    // - No sub-questions have been answered yet (nothing to learn from)
+    // - Already at the sub-question cap
+    const hasAnsweredSubQuestions = questionStack.some(q => q.answer !== '');
+    if (!decomposed 
+        || questionIndex === -1 
+        || !hasAnsweredSubQuestions 
+        || questionStack.length >= config.MAX_SUB_QUESTIONS) {
+        return {};
+    }
+
+    // Build a formatted string showing all sub-questions with their answer status
+    // Processing order is high index → low index, so we display from high to low
+    let subQuestionsWithAnswers = '';
+    let displayIndex = 1;
+    for (let i = questionStack.length - 1; i >= 0; i--) {
+        const { question, answer } = questionStack[i];
+        const status = answer !== '' ? 'answered' : 'not yet answered';
+        subQuestionsWithAnswers += `Sub-question ${displayIndex} (${status}): ${question}\n`;
+        if (answer !== '') {
+            subQuestionsWithAnswers += `Answer ${displayIndex}: ${answer}\n`;
+        }
+        subQuestionsWithAnswers += '\n';
+        displayIndex++;
+    }
+
+    const structuredLlm = llm.withStructuredOutput(planningOutput);
+    const planningPrompt = await planningPromptTemplate.formatMessages({
+        originalQuestion,
+        subQuestionsWithAnswers,
+    });
+    const { shouldAddQuestion, newSubQuestion } = await structuredLlm.invoke(planningPrompt, { runName: "planning_llm_call" });
+
+    if (shouldAddQuestion && newSubQuestion) {
+        const updatedStack = structuredClone(questionStack);
+        // Insert the new sub-question at questionIndex + 1 so it gets processed next
+        // (processing goes from high index → low index)
+        const insertIndex = questionIndex + 1;
+        updatedStack.splice(insertIndex, 0, { question: newSubQuestion, answer: '' });
+        return {
+            questionStack: updatedStack,
+            questionIndex: questionIndex + 1,
+        };
+    }
+
     return {};
 }
 
